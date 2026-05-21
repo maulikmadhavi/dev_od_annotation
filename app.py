@@ -13,6 +13,7 @@ from pathlib import Path
 from flask import Flask, abort, jsonify, render_template, request, send_from_directory
 
 IMAGE_EXTS = {".jpg", ".jpeg", ".png", ".bmp", ".webp"}
+BOOKMARK_FILE = ".bookmark"
 
 app = Flask(__name__)
 images_dir: Path = Path()
@@ -73,6 +74,20 @@ def api_annotations(name):
     ]
     lp.write_text(("\n".join(lines) + "\n") if lines else "", encoding="utf-8")
     return jsonify({"ok": True, "count": len(lines)})
+
+
+@app.route("/api/bookmark", methods=["GET", "POST"])
+def api_bookmark():
+    p = labels_dir / BOOKMARK_FILE
+    if request.method == "GET":
+        name = p.read_text(encoding="utf-8").strip() if p.exists() else ""
+        return jsonify({"image": name or None})
+    name = ((request.get_json() or {}).get("image") or "").strip()
+    if name:
+        p.write_text(name, encoding="utf-8")
+    else:
+        p.unlink(missing_ok=True)
+    return jsonify({"ok": True})
 
 
 def main():

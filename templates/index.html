@@ -229,8 +229,16 @@
   // ---------- network ----------
   async function loadList() {
     state.images = await (await fetch('/api/images')).json();
-    if (state.images.length) await loadImage(0);
-    else { fnEl.textContent = '(no images in folder)'; }
+    if (!state.images.length) { fnEl.textContent = '(no images in folder)'; return; }
+    let startIdx = 0;
+    try {
+      const bm = await (await fetch('/api/bookmark')).json();
+      if (bm.image) {
+        const i = state.images.indexOf(bm.image);
+        if (i >= 0) startIdx = i;
+      }
+    } catch (_) { /* no bookmark, start at 0 */ }
+    await loadImage(startIdx);
   }
 
   async function loadImage(i) {
@@ -250,6 +258,12 @@
     state.selected = -1;
     markSaved();
     fit(); draw();
+    // Persist current position so the next session resumes here.
+    fetch('/api/bookmark', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ image: name }),
+    }).catch(() => {});
   }
 
   function loadImg(src) {

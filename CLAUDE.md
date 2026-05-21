@@ -32,6 +32,7 @@ Two files do all the work:
   - `GET /api/image/<name>` → raw image bytes
   - `GET /api/annotations/<name>` → parsed YOLO boxes as JSON `[{class_id,x,y,w,h,score?}, …]` (normalized 0–1). Accepts **5-column ground truth** or **6-column predictions with confidence** on read; `score` is only present for 6-column inputs.
   - `POST /api/annotations/<name>` → writes the YOLO `.txt` back as 5 columns (confidence is dropped — once a human edits, the detector's score no longer applies)
+  - `GET /api/bookmark` / `POST /api/bookmark` → reads/writes `labels_dir/.bookmark` (single-line file holding the last-viewed image filename). The frontend writes this on every navigation and reads it on startup, so a fresh page load resumes at wherever the user last was. If the bookmarked file no longer exists in the folder, it silently falls back to image 0.
 - [templates/index.html](templates/index.html) — entire frontend in one file: HTML + CSS + vanilla JS, no build step, no dependencies. Renders the image to a `<canvas>` and overlays boxes; all hit-testing, drag/resize, and rendering happens in JS using a fit-to-window letterbox transform.
 
 Key invariant: **boxes are always stored in YOLO normalized format** (`x_center, y_center, width, height`, all 0–1). The canvas code converts to/from pixel space only for display and mouse math — server-side I/O is pure normalized round-trip with 6-decimal precision.
