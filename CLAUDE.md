@@ -1,0 +1,61 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## What this is
+
+A **local, single-user, lightweight web app** for reviewing/correcting YOLO-format object-detection annotations. Not a general annotation platform — deliberately scoped to the **person-detection** review loop only: there is intentionally no class-picker UI, no class names, no class colors. Every new box is written as `class_id = 0`. Existing non-zero class ids from baseline label files round-trip on save (we don't mutate them) but the UI doesn't distinguish them visually.
+
+If the user later wants multi-class support, that's a UI re-introduction (sidebar + color-per-class + 1–9 keys) — don't add it pre-emptively.
+
+## Run it
+
+Dependencies are managed by **pixi** (see [pixi.toml](pixi.toml)). Do not use pip / requirements.txt.
+
+```powershell
+pixi install                                          # one-time, creates .pixi/ env
+pixi run python app.py                                # uses ./images and ./labels
+pixi run python app.py <images_dir> [labels_dir]      # or pass them explicitly
+# then open http://127.0.0.1:5000
+```
+
+- Two-folder layout: images come from `images_dir`, YOLO `.txt` files come from `labels_dir`. Both default to `./images` and `./labels` respectively when no CLI args are given. **All writes go to `labels_dir`** — it doubles as the output folder, overwriting baseline labels in place. If the user wants a separate output folder later, add a `--output` flag rather than changing this default silently.
+- Optional `--port N` to change port.
+- The folders you pass *are* the state — no database, no per-user config, no project concept. Edits write straight back to the matching `.txt` file (one `.txt` per image, same stem).
+
+## Architecture
+
+Two files do all the work:
+
+- [app.py](app.py) — Flask backend, ~80 lines. CLI entry point that takes one or two folders, lists images, and exposes a tiny JSON API:
+  - `GET /api/images` → list of image filenames in `images_dir`
+  - `GET /api/image/<name>` → raw image bytes
+  - `GET /api/annotations/<name>` → parsed YOLO boxes as JSON `[{class_id,x,y,w,h,score?}, …]` (normalized 0–1). Accepts **5-column ground truth** or **6-column predictions with confidence** on read; `score` is only present for 6-column inputs.
+  - `POST /api/annotations/<name>` → writes the YOLO `.txt` back as 5 columns (confidence is dropped — once a human edits, the detector's score no longer applies)
+- [templates/index.html](templates/index.html) — entire frontend in one file: HTML + CSS + vanilla JS, no build step, no dependencies. Renders the image to a `<canvas>` and overlays boxes; all hit-testing, drag/resize, and rendering happens in JS using a fit-to-window letterbox transform.
+
+Key invariant: **boxes are always stored in YOLO normalized format** (`x_center, y_center, width, height`, all 0–1). The canvas code converts to/from pixel space only for display and mouse math — server-side I/O is pure normalized round-trip with 6-decimal precision.
+
+## UX contract (matches the README)
+
+Keyboard-driven verifier flow:
+
+- **A** — enter add mode (next click-drag draws a new box, then returns to select mode)
+- **D** / Delete — delete the selected box
+- **M** / Esc — return to select/modify mode (cancel add, deselect)
+- **← / →** — prev/next image (auto-saves dirty state before navigating)
+- **Ctrl+S** — explicit save
+
+Default mouse mode is always select/modify: click a box to select, drag its body to move, drag a corner handle to resize. Add mode is a one-shot toggle.
+
+Topbar shows a `saved` / `unsaved` status indicator; `beforeunload` warns if dirty.
+
+## When extending
+
+The current build is intentionally the v1 minimum (load folder · draw/move/delete boxes · class colors · prev/next · save). Deferred for later iterations: zoom/pan, undo, jump-to-image-N, toggle label visibility, hide/lock specific classes. Add these as small additions inside the existing two files rather than splitting into a framework — the "single HTML file, single Python file" shape is part of the design.
+
+Out of scope on purpose (don't add unless the user asks):
+- Polygons / keypoints / segmentation / tracking
+- COCO / Pascal VOC / other formats — YOLO only
+- Multi-user, auth, projects, datasets concept
+- Model-in-the-loop / active learning / auto-suggestions

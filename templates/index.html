@@ -1,0 +1,321 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>YOLO Annotation Review</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; background: #1e1e1e; color: #ddd;
+    font: 13px/1.4 system-ui, sans-serif; user-select: none; }
+  #app { display: grid; grid-template-rows: 40px 1fr; height: 100%; }
+  #topbar { display: flex; align-items: center; gap: 12px; padding: 0 12px;
+    background: #2a2a2a; border-bottom: 1px solid #111; }
+  #topbar button { background: #3a3a3a; color: #ddd; border: 1px solid #555;
+    padding: 4px 10px; border-radius: 3px; cursor: pointer; font: inherit; }
+  #topbar button:hover { background: #4a4a4a; }
+  #topbar .spacer { flex: 1; }
+  #filename { font-family: ui-monospace, monospace; opacity: .8; }
+  #status { font-size: 12px; opacity: .7; min-width: 90px; }
+  #status.dirty { color: #f5a623; }
+  #status.saved { color: #7ed321; }
+  #main { display: grid; grid-template-columns: 1fr; min-height: 0; }
+  #canvas-wrap { position: relative; background: #111; overflow: hidden; }
+  #canvas { position: absolute; top: 0; left: 0; cursor: default; }
+  #canvas.add { cursor: crosshair; }
+  #help { position: absolute; bottom: 8px; right: 8px; font-size: 11px;
+    opacity: .5; font-family: ui-monospace, monospace; background: rgba(0,0,0,.4);
+    padding: 6px 8px; border-radius: 3px; pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="app">
+  <div id="topbar">
+    <button id="prev">◀ Prev</button>
+    <button id="next">Next ▶</button>
+    <span id="filename">—</span>
+    <span id="counter" style="opacity:.6">0 / 0 (0%)</span>
+    <div class="spacer"></div>
+    <button id="btn-add" title="Add (A)">A · Add</button>
+    <button id="btn-del" title="Delete selected (D)">D · Delete</button>
+    <button id="btn-mod" title="Modify mode (M / Esc)">M · Modify</button>
+    <button id="btn-save" title="Save (Ctrl+S)">Save</button>
+    <span id="status" class="saved">saved</span>
+  </div>
+  <div id="main">
+    <div id="canvas-wrap">
+      <canvas id="canvas"></canvas>
+      <div id="help">A add · D delete · M modify · ← → nav · Ctrl+S save</div>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  const canvas = document.getElementById('canvas');
+  const ctx = canvas.getContext('2d');
+  const wrap = document.getElementById('canvas-wrap');
+  const statusEl = document.getElementById('status');
+  const fnEl = document.getElementById('filename');
+  const counterEl = document.getElementById('counter');
+
+  const HANDLE = 8;        // px size of resize handles
+  const MIN_BOX = 0.005;   // min normalized box dim
+  const BOX_COLOR = '#ff4d4d';
+  const state = {
+    images: [], idx: 0,
+    img: null, imgW: 0, imgH: 0,
+    boxes: [],            // {class_id,x,y,w,h} normalized
+    scale: 1, offX: 0, offY: 0,
+    selected: -1,
+    addMode: false,
+    drag: null,           // {kind, boxIdx, sx, sy, orig}
+    drawing: null,        // {x0,y0,x1,y1} image coords
+    dirty: false,
+  };
+
+  // ---------- coord transforms ----------
+  function fit() {
+    const w = wrap.clientWidth, h = wrap.clientHeight;
+    canvas.width = w; canvas.height = h;
+    if (!state.img) return;
+    state.scale = Math.min(w / state.imgW, h / state.imgH);
+    state.offX = (w - state.imgW * state.scale) / 2;
+    state.offY = (h - state.imgH * state.scale) / 2;
+  }
+  const i2s = (ix, iy) => [ix * state.scale + state.offX, iy * state.scale + state.offY];
+  const s2i = (sx, sy) => [(sx - state.offX) / state.scale, (sy - state.offY) / state.scale];
+  function boxRect(b) {
+    const [x, y] = i2s((b.x - b.w / 2) * state.imgW, (b.y - b.h / 2) * state.imgH);
+    return [x, y, b.w * state.imgW * state.scale, b.h * state.imgH * state.scale];
+  }
+
+  // ---------- rendering ----------
+  function draw() {
+    ctx.fillStyle = '#111';
+    ctx.fillRect(0, 0, canvas.width, canvas.height);
+    if (!state.img) return;
+    ctx.drawImage(state.img, state.offX, state.offY,
+      state.imgW * state.scale, state.imgH * state.scale);
+
+    state.boxes.forEach((b, i) => {
+      const [x, y, w, h] = boxRect(b);
+      ctx.lineWidth = (i === state.selected) ? 3 : 2;
+      ctx.strokeStyle = BOX_COLOR;
+      ctx.strokeRect(x, y, w, h);
+      if (i === state.selected) {
+        ctx.fillStyle = BOX_COLOR;
+        for (const [hx, hy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
+          ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
+        }
+      }
+    });
+
+    if (state.drawing) {
+      const [sx0, sy0] = i2s(state.drawing.x0, state.drawing.y0);
+      const [sx1, sy1] = i2s(state.drawing.x1, state.drawing.y1);
+      ctx.setLineDash([4, 4]);
+      ctx.strokeStyle = BOX_COLOR;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(Math.min(sx0, sx1), Math.min(sy0, sy1),
+        Math.abs(sx1 - sx0), Math.abs(sy1 - sy0));
+      ctx.setLineDash([]);
+    }
+  }
+
+  // ---------- hit testing ----------
+  function hitTest(sx, sy) {
+    // returns {boxIdx, kind} where kind is 'move'|'nw'|'ne'|'sw'|'se' or null
+    for (let i = state.boxes.length - 1; i >= 0; i--) {
+      const [x, y, w, h] = boxRect(state.boxes[i]);
+      const corners = { nw: [x, y], ne: [x + w, y], sw: [x, y + h], se: [x + w, y + h] };
+      for (const [k, [cx, cy]] of Object.entries(corners)) {
+        if (Math.abs(sx - cx) <= HANDLE && Math.abs(sy - cy) <= HANDLE)
+          return { boxIdx: i, kind: k };
+      }
+      if (sx >= x && sx <= x + w && sy >= y && sy <= y + h)
+        return { boxIdx: i, kind: 'move' };
+    }
+    return null;
+  }
+
+  // ---------- box editing in image-space ----------
+  function applyDrag(box, kind, dx, dy, orig) {
+    const W = state.imgW, H = state.imgH;
+    let l = (orig.x - orig.w / 2) * W;
+    let t = (orig.y - orig.h / 2) * H;
+    let r = l + orig.w * W;
+    let bt = t + orig.h * H;
+    if (kind === 'move') { l += dx; r += dx; t += dy; bt += dy; }
+    if (kind.includes('w')) l += dx;
+    if (kind.includes('e')) r += dx;
+    if (kind.includes('n')) t += dy;
+    if (kind.includes('s')) bt += dy;
+    if (r < l) [l, r] = [r, l];
+    if (bt < t) [t, bt] = [bt, t];
+    l = Math.max(0, Math.min(W, l)); r = Math.max(0, Math.min(W, r));
+    t = Math.max(0, Math.min(H, t)); bt = Math.max(0, Math.min(H, bt));
+    box.w = Math.max(MIN_BOX, (r - l) / W);
+    box.h = Math.max(MIN_BOX, (bt - t) / H);
+    box.x = (l + r) / 2 / W;
+    box.y = (t + bt) / 2 / H;
+  }
+
+  // ---------- mouse ----------
+  canvas.addEventListener('mousedown', (e) => {
+    const sx = e.offsetX, sy = e.offsetY;
+    const [ix, iy] = s2i(sx, sy);
+    if (state.addMode) {
+      state.drawing = { x0: ix, y0: iy, x1: ix, y1: iy };
+      return;
+    }
+    const hit = hitTest(sx, sy);
+    if (hit) {
+      state.selected = hit.boxIdx;
+      state.drag = { kind: hit.kind, boxIdx: hit.boxIdx, sx, sy,
+                     orig: { ...state.boxes[hit.boxIdx] } };
+    } else {
+      state.selected = -1;
+    }
+    draw();
+  });
+
+  canvas.addEventListener('mousemove', (e) => {
+    const sx = e.offsetX, sy = e.offsetY;
+    if (state.drawing) {
+      const [ix, iy] = s2i(sx, sy);
+      state.drawing.x1 = ix; state.drawing.y1 = iy;
+      draw();
+    } else if (state.drag) {
+      const dx = (sx - state.drag.sx) / state.scale;
+      const dy = (sy - state.drag.sy) / state.scale;
+      applyDrag(state.boxes[state.drag.boxIdx], state.drag.kind, dx, dy, state.drag.orig);
+      markDirty();
+      draw();
+    }
+  });
+
+  canvas.addEventListener('mouseup', () => {
+    if (state.drawing) {
+      const { x0, y0, x1, y1 } = state.drawing;
+      const W = state.imgW, H = state.imgH;
+      const l = Math.max(0, Math.min(x0, x1));
+      const r = Math.min(W, Math.max(x0, x1));
+      const t = Math.max(0, Math.min(y0, y1));
+      const b = Math.min(H, Math.max(y0, y1));
+      const nw = (r - l) / W, nh = (b - t) / H;
+      if (nw >= MIN_BOX && nh >= MIN_BOX) {
+        state.boxes.push({
+          class_id: 0,
+          x: (l + r) / 2 / W, y: (t + b) / 2 / H, w: nw, h: nh,
+        });
+        state.selected = state.boxes.length - 1;
+        markDirty();
+      }
+      state.drawing = null;
+      setAddMode(false);
+      draw();
+    }
+    state.drag = null;
+  });
+
+  // ---------- mode + status ----------
+  function setAddMode(on) {
+    state.addMode = on;
+    canvas.classList.toggle('add', on);
+  }
+  function markDirty() { state.dirty = true; statusEl.textContent = 'unsaved'; statusEl.className = 'dirty'; }
+  function markSaved() { state.dirty = false; statusEl.textContent = 'saved'; statusEl.className = 'saved'; }
+
+  // ---------- network ----------
+  async function loadList() {
+    state.images = await (await fetch('/api/images')).json();
+    if (state.images.length) await loadImage(0);
+    else { fnEl.textContent = '(no images in folder)'; }
+  }
+
+  async function loadImage(i) {
+    state.idx = i;
+    const name = state.images[i];
+    fnEl.textContent = name;
+    const total = state.images.length;
+    const pct = total ? Math.round((i + 1) / total * 100) : 0;
+    counterEl.textContent = `${i + 1} / ${total} (${pct}%)`;
+    const [boxes, img] = await Promise.all([
+      (await fetch(`/api/annotations/${encodeURIComponent(name)}`)).json(),
+      loadImg(`/api/image/${encodeURIComponent(name)}`),
+    ]);
+    state.boxes = boxes;
+    state.img = img;
+    state.imgW = img.naturalWidth; state.imgH = img.naturalHeight;
+    state.selected = -1;
+    markSaved();
+    fit(); draw();
+  }
+
+  function loadImg(src) {
+    return new Promise((res, rej) => {
+      const im = new Image();
+      im.onload = () => res(im);
+      im.onerror = rej;
+      im.src = src;
+    });
+  }
+
+  async function save() {
+    if (!state.images.length) return;
+    const name = state.images[state.idx];
+    await fetch(`/api/annotations/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.boxes),
+    });
+    markSaved();
+  }
+
+  async function navigate(delta) {
+    if (state.dirty) await save();
+    const n = state.images.length;
+    if (!n) return;
+    await loadImage((state.idx + delta + n) % n);
+  }
+
+  // ---------- keys + buttons ----------
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+    if (e.ctrlKey && e.key === 's') { e.preventDefault(); save(); return; }
+    if (e.key === 'ArrowLeft') { navigate(-1); return; }
+    if (e.key === 'ArrowRight') { navigate(1); return; }
+    if (e.key === 'a' || e.key === 'A') { setAddMode(true); return; }
+    if (e.key === 'm' || e.key === 'M' || e.key === 'Escape') {
+      setAddMode(false); state.drawing = null; draw(); return;
+    }
+    if (e.key === 'd' || e.key === 'D' || e.key === 'Delete') {
+      if (state.selected >= 0) {
+        state.boxes.splice(state.selected, 1);
+        state.selected = -1; markDirty(); draw();
+      }
+      return;
+    }
+  });
+  document.getElementById('prev').onclick = () => navigate(-1);
+  document.getElementById('next').onclick = () => navigate(1);
+  document.getElementById('btn-add').onclick = () => setAddMode(true);
+  document.getElementById('btn-mod').onclick = () => { setAddMode(false); draw(); };
+  document.getElementById('btn-del').onclick = () => {
+    if (state.selected >= 0) {
+      state.boxes.splice(state.selected, 1);
+      state.selected = -1; markDirty(); draw();
+    }
+  };
+  document.getElementById('btn-save').onclick = save;
+
+  window.addEventListener('resize', () => { fit(); draw(); });
+  window.addEventListener('beforeunload', (e) => {
+    if (state.dirty) { e.preventDefault(); e.returnValue = ''; }
+  });
+
+  loadList();
+})();
+</script>
+</body>
+</html>
