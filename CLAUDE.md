@@ -50,6 +50,8 @@ Keyboard-driven verifier flow:
 
 Default mouse mode is always select/modify: click a box to select, drag its body to move, drag a corner handle to resize. Add mode is a one-shot toggle.
 
+The topbar also has a `Jump` number input with a `Go` button (or press Enter) for hopping directly to a specific image index (1-based, out-of-range values flash a warning). Out-of-input typing never triggers shortcut keys because the global keydown handler ignores events whose target is an `<input>`.
+
 Topbar shows a `saved` / `unsaved` status indicator; `beforeunload` warns if dirty.
 
 ## When extending

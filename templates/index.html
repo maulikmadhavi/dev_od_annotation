@@ -34,8 +34,6 @@
 <body>
 <div id="app">
   <div id="topbar">
-    <button id="prev">◀ Prev</button>
-    <button id="next">Next ▶</button>
     <span id="filename">—</span>
     <span id="counter" style="opacity:.6">0 / 0 (0%)</span>
     <span id="box-count" style="opacity:.6">[Detection boxes=0]</span>
@@ -48,6 +46,13 @@
       <input id="paste-n" type="number" min="1" max="100" value="5">
     </label>
     <button id="btn-paste" title="Update next N images with current boxes (U)">U · Update</button>
+    <label title="Jump to image number (press Enter)">
+      Jump
+      <input id="jump-n" type="number" min="1" placeholder="#" style="width: 64px;">
+    </label>
+    <button id="btn-jump" title="Jump to image number">Go</button>
+    <button id="prev" title="Previous (←)">◀ Prev</button>
+    <button id="next" title="Next (→)">Next ▶</button>
     <button id="btn-save" title="Save (S or Ctrl+S)">Save</button>
     <span id="status" class="saved">saved</span>
   </div>
@@ -306,6 +311,20 @@
     await loadImage((state.idx + delta + n) % n);
   }
 
+  async function jumpTo() {
+    const inp = document.getElementById('jump-n');
+    const target = parseInt(inp.value, 10);
+    const total = state.images.length;
+    if (!target || target < 1 || target > total) {
+      flashStatus(`out of range (1-${total})`, true);
+      return;
+    }
+    if (state.dirty) await save();
+    await loadImage(target - 1);
+    inp.value = '';
+    inp.blur();
+  }
+
   // Copy current boxes to the next N images (no wrap-around).
   // Useful for video-frame sequences where the same person stays in place.
   async function pasteForward() {
@@ -371,6 +390,10 @@
   };
   document.getElementById('btn-save').onclick = save;
   document.getElementById('btn-paste').onclick = pasteForward;
+  document.getElementById('btn-jump').onclick = jumpTo;
+  document.getElementById('jump-n').addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') { e.preventDefault(); jumpTo(); }
+  });
 
   window.addEventListener('resize', () => { fit(); draw(); });
   window.addEventListener('beforeunload', (e) => {
