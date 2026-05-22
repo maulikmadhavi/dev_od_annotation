@@ -45,7 +45,8 @@ Keyboard-driven verifier flow:
 - **D** / Delete — delete the selected box
 - **M** / Esc — return to select/modify mode (cancel add, deselect)
 - **← / →** — prev/next image (auto-saves dirty state before navigating)
-- **Ctrl+S** — explicit save
+- **S** / Ctrl+S — explicit save
+- **U** — update-forward: copy the current image's boxes onto the next N images (N comes from the "Update fwd" number input in the topbar; default 5). Designed for video-frame sequences a few seconds apart where the same person stays roughly in place; the targets' existing labels are overwritten. No wrap-around at end of list. If the current image has zero boxes the action no-ops with a "nothing to paste" flash.
 
 Default mouse mode is always select/modify: click a box to select, drag its body to move, drag a corner handle to resize. Add mode is a one-shot toggle.
 

@@ -14,6 +14,9 @@
   #topbar button { background: #3a3a3a; color: #ddd; border: 1px solid #555;
     padding: 4px 10px; border-radius: 3px; cursor: pointer; font: inherit; }
   #topbar button:hover { background: #4a4a4a; }
+  #topbar input[type=number] { background: #1e1e1e; color: #ddd; border: 1px solid #555;
+    padding: 3px 4px; border-radius: 3px; width: 48px; font: inherit; }
+  #topbar label { display: flex; align-items: center; gap: 4px; font-size: 12px; opacity: .85; }
   #topbar .spacer { flex: 1; }
   #filename { font-family: ui-monospace, monospace; opacity: .8; }
   #status { font-size: 12px; opacity: .7; min-width: 90px; }
@@ -35,17 +38,23 @@
     <button id="next">Next ▶</button>
     <span id="filename">—</span>
     <span id="counter" style="opacity:.6">0 / 0 (0%)</span>
+    <span id="box-count" style="opacity:.6">[Detection boxes=0]</span>
     <div class="spacer"></div>
     <button id="btn-add" title="Add (A)">A · Add</button>
     <button id="btn-del" title="Delete selected (D)">D · Delete</button>
     <button id="btn-mod" title="Modify mode (M / Esc)">M · Modify</button>
-    <button id="btn-save" title="Save (Ctrl+S)">Save</button>
+    <label title="How many following images to update with the current boxes">
+      Update fwd
+      <input id="paste-n" type="number" min="1" max="100" value="5">
+    </label>
+    <button id="btn-paste" title="Update next N images with current boxes (U)">U · Update</button>
+    <button id="btn-save" title="Save (S or Ctrl+S)">Save</button>
     <span id="status" class="saved">saved</span>
   </div>
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="canvas"></canvas>
-      <div id="help">A add · D delete · M modify · ← → nav · Ctrl+S save</div>
+      <div id="help">A add · D delete · M modify · ← → nav · S save · U update-fwd</div>
     </div>
   </div>
 </div>
@@ -57,6 +66,7 @@
   const statusEl = document.getElementById('status');
   const fnEl = document.getElementById('filename');
   const counterEl = document.getElementById('counter');
+  const boxCountEl = document.getElementById('box-count');
 
   const HANDLE = 8;        // px size of resize handles
   const MIN_BOX = 0.005;   // min normalized box dim
@@ -210,6 +220,7 @@
         });
         state.selected = state.boxes.length - 1;
         markDirty();
+        updateBoxCount();
       }
       state.drawing = null;
       setAddMode(false);
@@ -225,6 +236,7 @@
   }
   function markDirty() { state.dirty = true; statusEl.textContent = 'unsaved'; statusEl.className = 'dirty'; }
   function markSaved() { state.dirty = false; statusEl.textContent = 'saved'; statusEl.className = 'saved'; }
+  function updateBoxCount() { boxCountEl.textContent = `[Detection boxes=${state.boxes.length}]`; }
 
   // ---------- network ----------
   async function loadList() {
@@ -257,6 +269,7 @@
     state.imgW = img.naturalWidth; state.imgH = img.naturalHeight;
     state.selected = -1;
     markSaved();
+    updateBoxCount();
     fit(); draw();
     // Persist current position so the next session resumes here.
     fetch('/api/bookmark', {
@@ -293,6 +306,39 @@
     await loadImage((state.idx + delta + n) % n);
   }
 
+  // Copy current boxes to the next N images (no wrap-around).
+  // Useful for video-frame sequences where the same person stays in place.
+  async function pasteForward() {
+    if (!state.boxes.length) { flashStatus('nothing to paste', true); return; }
+    const n = parseInt(document.getElementById('paste-n').value, 10);
+    if (!n || n < 1) return;
+    if (state.dirty) await save();
+    const targets = state.images.slice(state.idx + 1, state.idx + 1 + n);
+    if (!targets.length) { flashStatus('no images forward', true); return; }
+    const payload = state.boxes.map(({ score, ...b }) => b);
+    await Promise.all(targets.map(name =>
+      fetch(`/api/annotations/${encodeURIComponent(name)}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+      })
+    ));
+    flashStatus(`pasted to ${targets.length} image${targets.length === 1 ? '' : 's'}`);
+  }
+
+  let flashTimer = null;
+  function flashStatus(msg, isWarn = false) {
+    if (flashTimer) clearTimeout(flashTimer);
+    const prev = { text: statusEl.textContent, cls: statusEl.className };
+    statusEl.textContent = msg;
+    statusEl.className = isWarn ? 'dirty' : 'saved';
+    flashTimer = setTimeout(() => {
+      statusEl.textContent = state.dirty ? 'unsaved' : 'saved';
+      statusEl.className = state.dirty ? 'dirty' : 'saved';
+      flashTimer = null;
+    }, 2000);
+  }
+
   // ---------- keys + buttons ----------
   document.addEventListener('keydown', (e) => {
     if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
@@ -306,10 +352,12 @@
     if (e.key === 'd' || e.key === 'D' || e.key === 'Delete') {
       if (state.selected >= 0) {
         state.boxes.splice(state.selected, 1);
-        state.selected = -1; markDirty(); draw();
+        state.selected = -1; markDirty(); updateBoxCount(); draw();
       }
       return;
     }
+    if (e.key === 's' || e.key === 'S') { save(); return; }
+    if (e.key === 'u' || e.key === 'U') { pasteForward(); return; }
   });
   document.getElementById('prev').onclick = () => navigate(-1);
   document.getElementById('next').onclick = () => navigate(1);
@@ -318,10 +366,11 @@
   document.getElementById('btn-del').onclick = () => {
     if (state.selected >= 0) {
       state.boxes.splice(state.selected, 1);
-      state.selected = -1; markDirty(); draw();
+      state.selected = -1; markDirty(); updateBoxCount(); draw();
     }
   };
   document.getElementById('btn-save').onclick = save;
+  document.getElementById('btn-paste').onclick = pasteForward;
 
   window.addEventListener('resize', () => { fit(); draw(); });
   window.addEventListener('beforeunload', (e) => {
