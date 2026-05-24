@@ -34,14 +34,15 @@
   .tile a { display: block; }
   .tile img { width: 100%; height: 160px; object-fit: cover; display: block;
     background: #111; }
-  .tile-check { position: absolute; top: 6px; left: 6px;
-    width: 22px; height: 22px; border-radius: 3px;
-    background: rgba(0,0,0,.55); border: 1px solid #888;
+  .tile-check { position: absolute; top: 8px; left: 8px;
+    width: 26px; height: 26px; border-radius: 4px;
+    background: rgba(255,255,255,.92); border: 2px solid #fff;
+    box-shadow: 0 1px 4px rgba(0,0,0,.6);
     display: flex; align-items: center; justify-content: center;
     cursor: pointer; user-select: none; z-index: 2; font-weight: bold;
-    font-size: 14px; line-height: 1; color: transparent; }
-  .tile-check:hover { background: rgba(0,0,0,.8); }
-  .tile.selected .tile-check { background: #4d9fff; border-color: #4d9fff; color: #fff; }
+    font-size: 16px; line-height: 1; color: transparent; }
+  .tile-check:hover { background: #fff; }
+  .tile.selected .tile-check { background: #4d9fff; border-color: #fff; color: #fff; }
   .tile-footer { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
   .tile-name { flex: 1; font-family: ui-monospace, monospace; font-size: 11px;
     opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
