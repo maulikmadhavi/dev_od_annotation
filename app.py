@@ -33,15 +33,29 @@ def index():
     return render_template("index.html")
 
 
+@app.route("/browse")
+def browse():
+    return render_template("browse.html")
+
+
 @app.route("/api/images")
 def api_images():
     return jsonify(list_images())
 
 
-@app.route("/api/image/<path:name>")
+@app.route("/api/image/<path:name>", methods=["GET", "DELETE"])
 def api_image(name):
     if name not in list_images():
         abort(404)
+    if request.method == "DELETE":
+        (images_dir / name).unlink(missing_ok=True)
+        label_path(name).unlink(missing_ok=True)
+        # If the bookmark pointed to this image, clear it so the next
+        # session starts cleanly rather than failing to find a stale ref.
+        bm = labels_dir / BOOKMARK_FILE
+        if bm.exists() and bm.read_text(encoding="utf-8").strip() == name:
+            bm.unlink()
+        return jsonify({"ok": True, "deleted": name})
     return send_from_directory(images_dir, name)
 
 

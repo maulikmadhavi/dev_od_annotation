@@ -27,13 +27,17 @@ pixi run python app.py <images_dir> [labels_dir]      # or pass them explicitly
 
 Two files do all the work:
 
-- [app.py](app.py) — Flask backend, ~80 lines. CLI entry point that takes one or two folders, lists images, and exposes a tiny JSON API:
+- [app.py](app.py) — Flask backend, ~100 lines. CLI entry point that takes one or two folders, lists images, and exposes a tiny JSON API:
+  - `GET /` → annotation review page
+  - `GET /browse` → tile-grid browse page with per-image delete buttons
   - `GET /api/images` → list of image filenames in `images_dir`
   - `GET /api/image/<name>` → raw image bytes
+  - `DELETE /api/image/<name>` → removes the image file AND its matching `.txt` from `labels_dir`; if the bookmark pointed at it, clears the bookmark too. Idempotent in spirit but returns 404 if the name isn't currently listed.
   - `GET /api/annotations/<name>` → parsed YOLO boxes as JSON `[{class_id,x,y,w,h,score?}, …]` (normalized 0–1). Accepts **5-column ground truth** or **6-column predictions with confidence** on read; `score` is only present for 6-column inputs.
   - `POST /api/annotations/<name>` → writes the YOLO `.txt` back as 5 columns (confidence is dropped — once a human edits, the detector's score no longer applies)
   - `GET /api/bookmark` / `POST /api/bookmark` → reads/writes `labels_dir/.bookmark` (single-line file holding the last-viewed image filename). The frontend writes this on every navigation and reads it on startup, so a fresh page load resumes at wherever the user last was. If the bookmarked file no longer exists in the folder, it silently falls back to image 0.
-- [templates/index.html](templates/index.html) — entire frontend in one file: HTML + CSS + vanilla JS, no build step, no dependencies. Renders the image to a `<canvas>` and overlays boxes; all hit-testing, drag/resize, and rendering happens in JS using a fit-to-window letterbox transform.
+- [templates/index.html](templates/index.html) — annotation review UI in one file: HTML + CSS + vanilla JS, no build step, no dependencies. Renders the image to a `<canvas>` and overlays boxes; all hit-testing, drag/resize, and rendering happens in JS using a fit-to-window letterbox transform. Accepts a `?image=NAME` query param (sent by the browse view's tile links) that takes precedence over the bookmark when picking which image to open.
+- [templates/browse.html](templates/browse.html) — tile-grid browser. Each tile is a thumbnail link back to `/?image=<name>` plus a per-tile Delete button that confirms, calls `DELETE /api/image/<name>`, then fades the tile out. No selection / no batch operations — deliberately the simplest delete UI.
 
 Key invariant: **boxes are always stored in YOLO normalized format** (`x_center, y_center, width, height`, all 0–1). The canvas code converts to/from pixel space only for display and mouse math — server-side I/O is pure normalized round-trip with 6-decimal precision.
 

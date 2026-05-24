@@ -1,0 +1,94 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Browse Images</title>
+<style>
+  :root { color-scheme: dark; }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; min-height: 100%; background: #1e1e1e; color: #ddd;
+    font: 13px/1.4 system-ui, sans-serif; }
+  #topbar { display: flex; align-items: center; gap: 12px; padding: 8px 12px;
+    background: #2a2a2a; border-bottom: 1px solid #111;
+    position: sticky; top: 0; z-index: 10; }
+  #topbar a, #topbar button { background: #3a3a3a; color: #ddd; border: 1px solid #555;
+    padding: 4px 10px; border-radius: 3px; cursor: pointer; font: inherit;
+    text-decoration: none; }
+  #topbar a:hover, #topbar button:hover { background: #4a4a4a; }
+  #topbar .title { font-weight: bold; }
+  #topbar .spacer { flex: 1; }
+  #count { opacity: .65; font-family: ui-monospace, monospace; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 12px; padding: 12px; }
+  .tile { background: #252525; border: 1px solid #333; border-radius: 6px;
+    overflow: hidden; transition: opacity .25s ease, transform .25s ease; }
+  .tile.deleting { opacity: 0; transform: scale(0.95); pointer-events: none; }
+  .tile a { display: block; }
+  .tile img { width: 100%; height: 160px; object-fit: cover; display: block;
+    background: #111; }
+  .tile-footer { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
+  .tile-name { flex: 1; font-family: ui-monospace, monospace; font-size: 11px;
+    opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .delete-btn { background: #6b1f1f; color: #eee; border: 1px solid #883030;
+    padding: 3px 8px; border-radius: 3px; cursor: pointer;
+    font: inherit; font-size: 11px; }
+  .delete-btn:hover { background: #883030; }
+  #empty { padding: 40px; text-align: center; opacity: .6; }
+</style>
+</head>
+<body>
+<div id="topbar">
+  <span class="title">Browse</span>
+  <span id="count">Loading…</span>
+  <div class="spacer"></div>
+  <a href="/" title="Back to annotation review">← Review</a>
+</div>
+<div id="grid" class="grid"></div>
+<div id="empty" hidden>No images in the folder.</div>
+<script>
+(async () => {
+  const grid = document.getElementById('grid');
+  const countEl = document.getElementById('count');
+  const emptyEl = document.getElementById('empty');
+
+  function updateCount() {
+    const n = grid.querySelectorAll('.tile:not(.deleting)').length;
+    countEl.textContent = `${n} image${n === 1 ? '' : 's'}`;
+    emptyEl.hidden = n > 0;
+  }
+
+  async function load() {
+    const images = await (await fetch('/api/images')).json();
+    grid.innerHTML = '';
+    for (const name of images) {
+      const tile = document.createElement('div');
+      tile.className = 'tile';
+      const safe = String(name).replace(/"/g, '&quot;');
+      tile.innerHTML = `
+        <a href="/?image=${encodeURIComponent(name)}" title="Open in annotator">
+          <img src="/api/image/${encodeURIComponent(name)}" alt="${safe}" loading="lazy">
+        </a>
+        <div class="tile-footer">
+          <div class="tile-name" title="${safe}">${safe}</div>
+          <button class="delete-btn">Delete</button>
+        </div>`;
+      tile.querySelector('.delete-btn').onclick = () => onDelete(name, tile);
+      grid.appendChild(tile);
+    }
+    updateCount();
+  }
+
+  async function onDelete(name, tile) {
+    if (!confirm(`Delete ${name} and its label file?\n(This cannot be undone.)`)) return;
+    const r = await fetch(`/api/image/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!r.ok) { alert(`Failed to delete ${name}`); return; }
+    tile.classList.add('deleting');
+    updateCount();
+    setTimeout(() => { tile.remove(); updateCount(); }, 250);
+  }
+
+  load();
+})();
+</script>
+</body>
+</html>

@@ -11,9 +11,10 @@
   #app { display: grid; grid-template-rows: 40px 1fr; height: 100%; }
   #topbar { display: flex; align-items: center; gap: 12px; padding: 0 12px;
     background: #2a2a2a; border-bottom: 1px solid #111; }
-  #topbar button { background: #3a3a3a; color: #ddd; border: 1px solid #555;
-    padding: 4px 10px; border-radius: 3px; cursor: pointer; font: inherit; }
-  #topbar button:hover { background: #4a4a4a; }
+  #topbar button, #topbar a.btn { background: #3a3a3a; color: #ddd; border: 1px solid #555;
+    padding: 4px 10px; border-radius: 3px; cursor: pointer; font: inherit;
+    text-decoration: none; display: inline-block; }
+  #topbar button:hover, #topbar a.btn:hover { background: #4a4a4a; }
   #topbar input[type=number] { background: #1e1e1e; color: #ddd; border: 1px solid #555;
     padding: 3px 4px; border-radius: 3px; width: 48px; font: inherit; }
   #topbar label { display: flex; align-items: center; gap: 4px; font-size: 12px; opacity: .85; }
@@ -34,6 +35,7 @@
 <body>
 <div id="app">
   <div id="topbar">
+    <a class="btn" href="/browse" title="Browse all images">Browse</a>
     <span id="filename">—</span>
     <span id="counter" style="opacity:.6">0 / 0 (0%)</span>
     <span id="box-count" style="opacity:.6">[Detection boxes=0]</span>
@@ -248,13 +250,20 @@
     state.images = await (await fetch('/api/images')).json();
     if (!state.images.length) { fnEl.textContent = '(no images in folder)'; return; }
     let startIdx = 0;
-    try {
-      const bm = await (await fetch('/api/bookmark')).json();
-      if (bm.image) {
-        const i = state.images.indexOf(bm.image);
-        if (i >= 0) startIdx = i;
-      }
-    } catch (_) { /* no bookmark, start at 0 */ }
+    // ?image=NAME (from the browse view) wins over the bookmark.
+    const requested = new URLSearchParams(location.search).get('image');
+    if (requested) {
+      const i = state.images.indexOf(requested);
+      if (i >= 0) startIdx = i;
+    } else {
+      try {
+        const bm = await (await fetch('/api/bookmark')).json();
+        if (bm.image) {
+          const i = state.images.indexOf(bm.image);
+          if (i >= 0) startIdx = i;
+        }
+      } catch (_) { /* no bookmark, start at 0 */ }
+    }
     await loadImage(startIdx);
   }
 
