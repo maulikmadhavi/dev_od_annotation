@@ -18,14 +18,30 @@
   #topbar .title { font-weight: bold; }
   #topbar .spacer { flex: 1; }
   #count { opacity: .65; font-family: ui-monospace, monospace; }
+  #sel-count { opacity: .85; font-family: ui-monospace, monospace; color: #4d9fff; }
+  #sel-actions { display: none; align-items: center; gap: 8px; }
+  #sel-actions.on { display: flex; }
+  #btn-bulk-del { background: #6b1f1f; border-color: #883030; }
+  #btn-bulk-del:hover { background: #883030; }
+  #btn-clear-sel { background: #2c2c2c; }
   .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
     gap: 12px; padding: 12px; }
   .tile { background: #252525; border: 1px solid #333; border-radius: 6px;
-    overflow: hidden; transition: opacity .25s ease, transform .25s ease; }
+    overflow: hidden; transition: opacity .25s ease, transform .25s ease;
+    position: relative; }
   .tile.deleting { opacity: 0; transform: scale(0.95); pointer-events: none; }
+  .tile.selected { outline: 2px solid #4d9fff; outline-offset: -2px; }
   .tile a { display: block; }
   .tile img { width: 100%; height: 160px; object-fit: cover; display: block;
     background: #111; }
+  .tile-check { position: absolute; top: 6px; left: 6px;
+    width: 22px; height: 22px; border-radius: 3px;
+    background: rgba(0,0,0,.55); border: 1px solid #888;
+    display: flex; align-items: center; justify-content: center;
+    cursor: pointer; user-select: none; z-index: 2; font-weight: bold;
+    font-size: 14px; line-height: 1; color: transparent; }
+  .tile-check:hover { background: rgba(0,0,0,.8); }
+  .tile.selected .tile-check { background: #4d9fff; border-color: #4d9fff; color: #fff; }
   .tile-footer { display: flex; align-items: center; gap: 8px; padding: 6px 8px; }
   .tile-name { flex: 1; font-family: ui-monospace, monospace; font-size: 11px;
     opacity: .8; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -40,6 +56,12 @@
 <div id="topbar">
   <span class="title">Browse</span>
   <span id="count">Loading…</span>
+  <button id="btn-select-all" title="Select every image">Select all</button>
+  <div id="sel-actions">
+    <span id="sel-count">0 selected</span>
+    <button id="btn-bulk-del" title="Delete all selected images and labels">Delete selected</button>
+    <button id="btn-clear-sel" title="Clear selection (Esc)">Clear</button>
+  </div>
   <div class="spacer"></div>
   <a href="/" title="Back to annotation review">← Review</a>
 </div>
@@ -49,22 +71,70 @@
 (async () => {
   const grid = document.getElementById('grid');
   const countEl = document.getElementById('count');
+  const selCountEl = document.getElementById('sel-count');
+  const selActionsEl = document.getElementById('sel-actions');
   const emptyEl = document.getElementById('empty');
 
+  const selected = new Set();   // image names currently selected
+  let lastAnchor = null;        // for shift-range select
+
+  function liveTiles() {
+    return [...grid.querySelectorAll('.tile:not(.deleting)')];
+  }
+
   function updateCount() {
-    const n = grid.querySelectorAll('.tile:not(.deleting)').length;
+    const n = liveTiles().length;
     countEl.textContent = `${n} image${n === 1 ? '' : 's'}`;
     emptyEl.hidden = n > 0;
+  }
+
+  function updateSelection() {
+    selCountEl.textContent = `${selected.size} selected`;
+    selActionsEl.classList.toggle('on', selected.size > 0);
+  }
+
+  function setSelected(name, on) {
+    const tile = grid.querySelector(`.tile[data-name="${CSS.escape(name)}"]`);
+    if (!tile) return;
+    if (on) selected.add(name); else selected.delete(name);
+    tile.classList.toggle('selected', on);
+  }
+
+  function toggleAt(name, tile, ev) {
+    if (ev.shiftKey && lastAnchor && lastAnchor !== name) {
+      const tiles = liveTiles();
+      const a = tiles.findIndex(t => t.dataset.name === lastAnchor);
+      const b = tiles.findIndex(t => t.dataset.name === name);
+      if (a >= 0 && b >= 0) {
+        const [lo, hi] = a < b ? [a, b] : [b, a];
+        const turnOn = !selected.has(name);
+        for (let i = lo; i <= hi; i++) setSelected(tiles[i].dataset.name, turnOn);
+      }
+    } else {
+      setSelected(name, !selected.has(name));
+    }
+    lastAnchor = name;
+    updateSelection();
+  }
+
+  function clearSelection() {
+    for (const name of [...selected]) setSelected(name, false);
+    lastAnchor = null;
+    updateSelection();
   }
 
   async function load() {
     const images = await (await fetch('/api/images')).json();
     grid.innerHTML = '';
+    selected.clear();
+    lastAnchor = null;
     for (const name of images) {
       const tile = document.createElement('div');
       tile.className = 'tile';
+      tile.dataset.name = name;
       const safe = String(name).replace(/"/g, '&quot;');
       tile.innerHTML = `
+        <div class="tile-check" title="Select (Shift+click for range)">✓</div>
         <a href="/?image=${encodeURIComponent(name)}" title="Open in annotator">
           <img src="/api/image/${encodeURIComponent(name)}" alt="${safe}" loading="lazy">
         </a>
@@ -72,20 +142,63 @@
           <div class="tile-name" title="${safe}">${safe}</div>
           <button class="delete-btn">Delete</button>
         </div>`;
+      tile.querySelector('.tile-check').addEventListener('click', (ev) => {
+        ev.preventDefault(); ev.stopPropagation();
+        toggleAt(name, tile, ev);
+      });
       tile.querySelector('.delete-btn').onclick = () => onDelete(name, tile);
       grid.appendChild(tile);
     }
     updateCount();
+    updateSelection();
+  }
+
+  async function deleteOne(name) {
+    const r = await fetch(`/api/image/${encodeURIComponent(name)}`, { method: 'DELETE' });
+    if (!r.ok) throw new Error(`Failed to delete ${name}`);
+    const tile = grid.querySelector(`.tile[data-name="${CSS.escape(name)}"]`);
+    if (tile) {
+      tile.classList.add('deleting');
+      setTimeout(() => tile.remove(), 250);
+    }
+    selected.delete(name);
   }
 
   async function onDelete(name, tile) {
     if (!confirm(`Delete ${name} and its label file?\n(This cannot be undone.)`)) return;
-    const r = await fetch(`/api/image/${encodeURIComponent(name)}`, { method: 'DELETE' });
-    if (!r.ok) { alert(`Failed to delete ${name}`); return; }
-    tile.classList.add('deleting');
+    try { await deleteOne(name); }
+    catch (e) { alert(e.message); return; }
     updateCount();
-    setTimeout(() => { tile.remove(); updateCount(); }, 250);
+    updateSelection();
   }
+
+  async function onBulkDelete() {
+    if (!selected.size) return;
+    const names = [...selected];
+    if (!confirm(`Delete ${names.length} image${names.length === 1 ? '' : 's'} and their label files?\n(This cannot be undone.)`)) return;
+    const results = await Promise.allSettled(names.map(deleteOne));
+    const failed = results.filter(r => r.status === 'rejected');
+    if (failed.length) alert(`Failed to delete ${failed.length} item(s).`);
+    // Give the fade-out a moment, then refresh counts.
+    setTimeout(() => { updateCount(); updateSelection(); }, 300);
+  }
+
+  function selectAll() {
+    const tiles = liveTiles();
+    if (!tiles.length) return;
+    const allOn = tiles.every(t => selected.has(t.dataset.name));
+    for (const t of tiles) setSelected(t.dataset.name, !allOn);
+    lastAnchor = tiles[tiles.length - 1].dataset.name;
+    updateSelection();
+  }
+
+  document.getElementById('btn-select-all').onclick = selectAll;
+  document.getElementById('btn-bulk-del').onclick = onBulkDelete;
+  document.getElementById('btn-clear-sel').onclick = clearSelection;
+  document.addEventListener('keydown', (e) => {
+    if (e.target.tagName === 'INPUT') return;
+    if (e.key === 'Escape') clearSelection();
+  });
 
   load();
 })();
