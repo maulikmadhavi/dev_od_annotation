@@ -19,9 +19,11 @@
   #status { font-size: 12px; opacity: .7; min-width: 90px; }
   #status.dirty { color: #f5a623; }
   #status.saved { color: #7ed321; }
-  #prop-group { display: inline-flex; align-items: center; gap: 4px; }
-  #prop-n { width: 48px; background: #3a3a3a; color: #ddd; border: 1px solid #555;
+  #prop-group, #class-group { display: inline-flex; align-items: center; gap: 4px; }
+  #prop-n, #box-class { width: 48px; background: #3a3a3a; color: #ddd; border: 1px solid #555;
     padding: 4px 6px; border-radius: 3px; font: inherit; }
+  #box-class:disabled { opacity: .4; }
+  #class-group label { opacity: .7; }
   #main { display: grid; grid-template-columns: 1fr; min-height: 0; }
   #canvas-wrap { position: relative; background: #111; overflow: hidden; }
   #canvas { position: absolute; top: 0; left: 0; cursor: default; }
@@ -42,7 +44,11 @@
     <button id="btn-add" title="Add (A)">A · Add</button>
     <button id="btn-del" title="Delete selected (D)">D · Delete</button>
     <button id="btn-mod" title="Modify mode (M / Esc)">M · Modify</button>
-    <span id="prop-group" title="Copy the selected box into the next N images (P)">
+    <span id="class-group" title="Class id of the selected box (press 0–9, or type here)">
+      <label for="box-class">class</label>
+      <input id="box-class" type="number" min="0" value="" disabled>
+    </span>
+    <span id="prop-group" title="Copy this frame's boxes (or just the selected one) into the next N images (P)">
       <button id="btn-prop">P · Apply →</button>
       <input id="prop-n" type="number" min="1" value="5">
     </span>
@@ -52,7 +58,7 @@
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="canvas"></canvas>
-      <div id="help">A add · D delete · M modify · P apply→N · ← → nav · Ctrl+S save</div>
+      <div id="help">A add · D delete · 0-9 class · M modify · P apply→N · ← → nav · Ctrl+S save</div>
     </div>
   </div>
 </div>
@@ -67,7 +73,14 @@
 
   const HANDLE = 8;        // px size of resize handles
   const MIN_BOX = 0.005;   // min normalized box dim
-  const BOX_COLOR = '#ff4d4d';
+  // Distinct color per class id so categories are visually separable.
+  const CLASS_COLORS = ['#ff4d4d', '#4d9dff', '#4dff88', '#ffd24d', '#c04dff',
+    '#ff8a4d', '#4dffe0', '#ff4da6', '#a6ff4d', '#4d6bff'];
+  const classColor = (id) => {
+    const n = CLASS_COLORS.length;
+    return CLASS_COLORS[(((id | 0) % n) + n) % n];
+  };
+  const BOX_COLOR = CLASS_COLORS[0];
   const state = {
     images: [], idx: 0,
     img: null, imgW: 0, imgH: 0,
@@ -106,16 +119,19 @@
 
     state.boxes.forEach((b, i) => {
       const [x, y, w, h] = boxRect(b);
+      const col = classColor(b.class_id);
       ctx.lineWidth = (i === state.selected) ? 3 : 2;
-      ctx.strokeStyle = BOX_COLOR;
+      ctx.strokeStyle = col;
       ctx.strokeRect(x, y, w, h);
+      drawClassTag(x, y, String(b.class_id), col);
       if (i === state.selected) {
-        ctx.fillStyle = BOX_COLOR;
+        ctx.fillStyle = col;
         for (const [hx, hy] of [[x, y], [x + w, y], [x, y + h], [x + w, y + h]]) {
           ctx.fillRect(hx - HANDLE / 2, hy - HANDLE / 2, HANDLE, HANDLE);
         }
       }
     });
+    updateClassInput();
 
     if (state.drawing) {
       const [sx0, sy0] = i2s(state.drawing.x0, state.drawing.y0);
@@ -127,6 +143,18 @@
         Math.abs(sx1 - sx0), Math.abs(sy1 - sy0));
       ctx.setLineDash([]);
     }
+  }
+
+  // Small class-id badge at the box's top-left (sits above the edge if there's room).
+  function drawClassTag(x, y, text, col) {
+    ctx.font = 'bold 12px ui-monospace, monospace';
+    ctx.textBaseline = 'middle';
+    const pad = 3, bh = 16, bw = ctx.measureText(text).width + pad * 2;
+    const ly = (y - bh >= 0) ? y - bh : y;
+    ctx.fillStyle = col;
+    ctx.fillRect(x, ly, bw, bh);
+    ctx.fillStyle = '#000';
+    ctx.fillText(text, x + pad, ly + bh / 2 + 0.5);
   }
 
   // ---------- hit testing ----------
@@ -230,6 +258,22 @@
     state.addMode = on;
     canvas.classList.toggle('add', on);
   }
+  const classInput = document.getElementById('box-class');
+  function updateClassInput() {
+    if (document.activeElement === classInput) return;  // don't clobber while typing
+    if (state.selected >= 0) {
+      classInput.value = state.boxes[state.selected].class_id;
+      classInput.disabled = false;
+    } else {
+      classInput.value = '';
+      classInput.disabled = true;
+    }
+  }
+  function setSelectedClass(id) {
+    if (state.selected < 0 || !Number.isFinite(id) || id < 0) return;
+    state.boxes[state.selected].class_id = id | 0;
+    markDirty(); draw();
+  }
   function markDirty() { state.dirty = true; statusEl.textContent = 'unsaved'; statusEl.className = 'dirty'; }
   function markSaved() { state.dirty = false; statusEl.textContent = 'saved'; statusEl.className = 'saved'; }
 
@@ -294,17 +338,19 @@
   }
 
   async function propagate() {
-    if (state.selected < 0) { flashStatus('select a box first'); return; }
+    // Selected box only if one is selected; otherwise every box in this frame.
+    const boxes = state.selected >= 0 ? [state.boxes[state.selected]] : state.boxes;
+    if (!boxes.length) { flashStatus('no boxes to apply'); return; }
     const n = Math.max(1, parseInt(document.getElementById('prop-n').value, 10) || 0);
     if (state.dirty) await save();
     const name = state.images[state.idx];
-    const box = state.boxes[state.selected];
     const res = await (await fetch(`/api/propagate/${encodeURIComponent(name)}`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ box, count: n }),
+      body: JSON.stringify({ boxes, count: n }),
     })).json();
-    flashStatus(`applied to ${res.applied} frame${res.applied === 1 ? '' : 's'}`);
+    const nb = boxes.length;
+    flashStatus(`${nb} box${nb === 1 ? '' : 'es'} → ${res.applied} frame${res.applied === 1 ? '' : 's'}`);
   }
 
   let flashTimer = null;
@@ -330,6 +376,7 @@
     if (e.key === 'ArrowRight') { navigate(1); return; }
     if (e.key === 'a' || e.key === 'A') { setAddMode(true); return; }
     if (e.key === 'p' || e.key === 'P') { propagate(); return; }
+    if (/^[0-9]$/.test(e.key)) { setSelectedClass(parseInt(e.key, 10)); return; }
     if (e.key === 'm' || e.key === 'M' || e.key === 'Escape') {
       setAddMode(false); state.drawing = null; draw(); return;
     }
@@ -351,6 +398,10 @@
       state.selected = -1; markDirty(); draw();
     }
   };
+  classInput.addEventListener('input', () => {
+    const v = parseInt(classInput.value, 10);
+    if (Number.isFinite(v) && v >= 0) setSelectedClass(v);
+  });
   document.getElementById('btn-prop').onclick = propagate;
   document.getElementById('btn-save').onclick = save;
 

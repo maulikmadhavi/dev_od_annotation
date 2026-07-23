@@ -78,25 +78,28 @@ def api_annotations(name):
 
 @app.route("/api/propagate/<path:name>", methods=["POST"])
 def api_propagate(name):
-    """Append one box to the label files of the next N images after `name`.
+    """Append the given boxes to the label files of the next N images after `name`.
 
-    Existing boxes are preserved (the box is appended, not overwritten). Written
-    as a 5-column line — same as a saved edit, since this box is human-authored.
+    Existing boxes are preserved (boxes are appended, not overwritten). Written
+    as 5-column lines — same as a saved edit, since these boxes are human-authored.
     """
     data = request.get_json() or {}
-    box = data.get("box")
+    boxes = data.get("boxes") or []
     count = int(data.get("count") or 0)
     images = list_images()
-    if name not in images or not box or count <= 0:
+    if name not in images or not boxes or count <= 0:
         return jsonify({"ok": False, "applied": 0, "images": []})
     start = images.index(name)
     targets = images[start + 1:start + 1 + count]
-    line = (f"{int(box['class_id'])} {float(box['x']):.6f} {float(box['y']):.6f} "
-            f"{float(box['w']):.6f} {float(box['h']):.6f}")
+    block = "\n".join(
+        f"{int(b['class_id'])} {float(b['x']):.6f} {float(b['y']):.6f} "
+        f"{float(b['w']):.6f} {float(b['h']):.6f}"
+        for b in boxes
+    )
     for img in targets:
         lp = label_path(img)
         existing = lp.read_text(encoding="utf-8").rstrip("\n") if lp.exists() else ""
-        content = (existing + "\n" + line) if existing else line
+        content = (existing + "\n" + block) if existing else block
         lp.write_text(content + "\n", encoding="utf-8")
     return jsonify({"ok": True, "applied": len(targets), "images": targets})
 
