@@ -19,6 +19,9 @@
   #status { font-size: 12px; opacity: .7; min-width: 90px; }
   #status.dirty { color: #f5a623; }
   #status.saved { color: #7ed321; }
+  #prop-group { display: inline-flex; align-items: center; gap: 4px; }
+  #prop-n { width: 48px; background: #3a3a3a; color: #ddd; border: 1px solid #555;
+    padding: 4px 6px; border-radius: 3px; font: inherit; }
   #main { display: grid; grid-template-columns: 1fr; min-height: 0; }
   #canvas-wrap { position: relative; background: #111; overflow: hidden; }
   #canvas { position: absolute; top: 0; left: 0; cursor: default; }
@@ -39,13 +42,17 @@
     <button id="btn-add" title="Add (A)">A · Add</button>
     <button id="btn-del" title="Delete selected (D)">D · Delete</button>
     <button id="btn-mod" title="Modify mode (M / Esc)">M · Modify</button>
+    <span id="prop-group" title="Copy the selected box into the next N images (P)">
+      <button id="btn-prop">P · Apply →</button>
+      <input id="prop-n" type="number" min="1" value="5">
+    </span>
     <button id="btn-save" title="Save (Ctrl+S)">Save</button>
     <span id="status" class="saved">saved</span>
   </div>
   <div id="main">
     <div id="canvas-wrap">
       <canvas id="canvas"></canvas>
-      <div id="help">A add · D delete · M modify · ← → nav · Ctrl+S save</div>
+      <div id="help">A add · D delete · M modify · P apply→N · ← → nav · Ctrl+S save</div>
     </div>
   </div>
 </div>
@@ -286,6 +293,28 @@
     markSaved();
   }
 
+  async function propagate() {
+    if (state.selected < 0) { flashStatus('select a box first'); return; }
+    const n = Math.max(1, parseInt(document.getElementById('prop-n').value, 10) || 0);
+    if (state.dirty) await save();
+    const name = state.images[state.idx];
+    const box = state.boxes[state.selected];
+    const res = await (await fetch(`/api/propagate/${encodeURIComponent(name)}`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ box, count: n }),
+    })).json();
+    flashStatus(`applied to ${res.applied} frame${res.applied === 1 ? '' : 's'}`);
+  }
+
+  let flashTimer = null;
+  function flashStatus(msg) {
+    statusEl.textContent = msg;
+    statusEl.className = 'saved';
+    clearTimeout(flashTimer);
+    flashTimer = setTimeout(() => { state.dirty ? markDirty() : markSaved(); }, 1600);
+  }
+
   async function navigate(delta) {
     if (state.dirty) await save();
     const n = state.images.length;
@@ -300,6 +329,7 @@
     if (e.key === 'ArrowLeft') { navigate(-1); return; }
     if (e.key === 'ArrowRight') { navigate(1); return; }
     if (e.key === 'a' || e.key === 'A') { setAddMode(true); return; }
+    if (e.key === 'p' || e.key === 'P') { propagate(); return; }
     if (e.key === 'm' || e.key === 'M' || e.key === 'Escape') {
       setAddMode(false); state.drawing = null; draw(); return;
     }
@@ -321,6 +351,7 @@
       state.selected = -1; markDirty(); draw();
     }
   };
+  document.getElementById('btn-prop').onclick = propagate;
   document.getElementById('btn-save').onclick = save;
 
   window.addEventListener('resize', () => { fit(); draw(); });

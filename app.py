@@ -76,6 +76,31 @@ def api_annotations(name):
     return jsonify({"ok": True, "count": len(lines)})
 
 
+@app.route("/api/propagate/<path:name>", methods=["POST"])
+def api_propagate(name):
+    """Append one box to the label files of the next N images after `name`.
+
+    Existing boxes are preserved (the box is appended, not overwritten). Written
+    as a 5-column line — same as a saved edit, since this box is human-authored.
+    """
+    data = request.get_json() or {}
+    box = data.get("box")
+    count = int(data.get("count") or 0)
+    images = list_images()
+    if name not in images or not box or count <= 0:
+        return jsonify({"ok": False, "applied": 0, "images": []})
+    start = images.index(name)
+    targets = images[start + 1:start + 1 + count]
+    line = (f"{int(box['class_id'])} {float(box['x']):.6f} {float(box['y']):.6f} "
+            f"{float(box['w']):.6f} {float(box['h']):.6f}")
+    for img in targets:
+        lp = label_path(img)
+        existing = lp.read_text(encoding="utf-8").rstrip("\n") if lp.exists() else ""
+        content = (existing + "\n" + line) if existing else line
+        lp.write_text(content + "\n", encoding="utf-8")
+    return jsonify({"ok": True, "applied": len(targets), "images": targets})
+
+
 @app.route("/api/bookmark", methods=["GET", "POST"])
 def api_bookmark():
     p = labels_dir / BOOKMARK_FILE
